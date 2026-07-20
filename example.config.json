@@ -1,0 +1,21 @@
+{
+  "listen": "127.0.0.1:8090",
+  "audit": { "path": "audit.jsonl" },
+  "timeout_seconds": 30,
+  "providers": [
+    {
+      "name": "groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key_env": "GROQ_API_KEY",
+      "pricing": { "prompt_per_1m_usd": 0.05, "completion_per_1m_usd": 0.08 },
+      "model_override": "llama-3.1-8b-instant"
+    },
+    {
+      "name": "fireworks",
+      "base_url": "https://api.fireworks.ai/inference/v1",
+      "api_key_env": "FIREWORKS_API_KEY",
+      "pricing": { "prompt_per_1m_usd": 0.15, "completion_per_1m_usd": 0.60 },
+      "model_override": "accounts/fireworks/models/gpt-oss-120b"
+    }
+  ]
+}

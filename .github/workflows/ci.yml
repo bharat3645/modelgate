@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -d .; exit 1)
+      - name: go vet
+        run: go vet ./...
+      - name: go test (race)
+        run: go test -race -count=1 ./...
+      - name: go build
+        run: go build ./...
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: build binary
+        run: go build -o /tmp/modelgate ./cmd/modelgate
+      - name: end-to-end smoke
+        run: bash ci/smoke.sh
