@@ -67,7 +67,14 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8090/v1/c
 echo "ok - streaming request rejected with 400"
 
 echo "--- audit log assertions ---"
-MODE=$(stat -f '%Lp' "$WORK/audit.jsonl" 2>/dev/null || stat -c '%a' "$WORK/audit.jsonl")
+# GNU stat (-c, Linux/CI) first: BSD stat (macOS, local dev) rejects -c
+# outright (exit nonzero), so the fallback triggers correctly. The other
+# order is the real bug this had: BSD `stat -f FORMAT` and GNU `stat -f`
+# (a totally different flag, "show filesystem info") share a letter but
+# not a meaning - GNU accepts -f with a bogus FORMAT arg and just prints
+# default filesystem info instead of erroring, so a GNU-second fallback
+# never fires and $MODE silently captures the wrong multi-line output.
+MODE=$(stat -c '%a' "$WORK/audit.jsonl" 2>/dev/null || stat -f '%Lp' "$WORK/audit.jsonl")
 [ "$MODE" = "600" ] || { echo "FAIL: audit.jsonl mode = $MODE, want 600"; exit 1; }
 echo "ok - audit.jsonl is 0600"
 
