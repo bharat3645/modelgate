@@ -1,5 +1,7 @@
 # modelgate
 
+[![CI](https://github.com/bharat3645/modelgate/actions/workflows/ci.yml/badge.svg)](https://github.com/bharat3645/modelgate/actions/workflows/ci.yml)
+
 A minimal gateway for OpenAI-compatible `/v1/chat/completions` requests:
 point your existing OpenAI-SDK-shaped client at modelgate instead of a
 single provider, and it routes to a configured list of backends with
