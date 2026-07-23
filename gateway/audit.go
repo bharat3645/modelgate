@@ -28,6 +28,22 @@ type Entry struct {
 	// this is what makes fallback visible in the audit trail.
 	AttemptedProviders []string `json:"attempted_providers,omitempty"`
 	Error              string   `json:"error,omitempty"`
+
+	// PromptProofVerdict is the promptproof verdict for the scanned request
+	// content ("suspicious"/"dangerous"), empty when nothing triggered.
+	PromptProofVerdict string `json:"promptproof_verdict,omitempty"`
+	// PromptProofScore is the promptproof aggregate score.
+	PromptProofScore int `json:"promptproof_score,omitempty"`
+	// PromptProofCategories lists the finding categories seen (metadata
+	// only — never the matched content).
+	PromptProofCategories []string `json:"promptproof_categories,omitempty"`
+	// PromptProofBlocked reports that the request was rejected (403)
+	// before any provider was tried because it met the threshold under the
+	// block action.
+	PromptProofBlocked bool `json:"promptproof_blocked,omitempty"`
+	// PromptProofError records a scanner failure. The request is forwarded
+	// unscanned (fail-open); the error is surfaced here.
+	PromptProofError string `json:"promptproof_error,omitempty"`
 }
 
 // Auditor appends Entry records as JSONL. Safe for concurrent use. A

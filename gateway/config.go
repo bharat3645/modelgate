@@ -25,11 +25,46 @@ type AuditConfig struct {
 	Path string `json:"path"`
 }
 
+// PromptProofConfig wires the promptproof data-plane scanner
+// (https://github.com/bharat3645/promptproof) into the inbound request
+// path: a chat-completion request's message content is scanned for
+// prompt-injection / exfiltration signals before it is forwarded to any
+// provider. Opt-in and off by default — an absent block (or enabled:false)
+// means no scanning and byte-identical behavior to a gateway without it.
+type PromptProofConfig struct {
+	// Enabled turns scanning on. Default false.
+	Enabled bool `json:"enabled"`
+
+	// Binary is the promptproof executable to run as a `serve`
+	// coprocess. Default "promptproof" (resolved on PATH).
+	Binary string `json:"binary,omitempty"`
+
+	// Threshold is the minimum verdict that triggers Action:
+	// "suspicious" or "dangerous" (default).
+	Threshold string `json:"threshold,omitempty"`
+
+	// Action on a triggering verdict: "block" (default) rejects the
+	// request with 403 so the tainted content never reaches a provider;
+	// "flag" forwards it but audits the verdict and sets an
+	// X-PromptProof-Verdict response header.
+	Action string `json:"action,omitempty"`
+
+	// SuspiciousAt / DangerousAt tune promptproof's underlying score
+	// thresholds (passed to `serve`). 0 = promptproof's defaults.
+	SuspiciousAt int `json:"suspicious_at,omitempty"`
+	DangerousAt  int `json:"dangerous_at,omitempty"`
+
+	// Pool is the number of `promptproof serve` coprocesses kept warm
+	// (max concurrent scans). Default 2.
+	Pool int `json:"pool,omitempty"`
+}
+
 type Config struct {
-	Listen    string       `json:"listen"`
-	Audit     AuditConfig  `json:"audit"`
-	Providers []Provider   `json:"providers"`
-	Timeout   TimeoutField `json:"timeout_seconds"`
+	Listen      string             `json:"listen"`
+	Audit       AuditConfig        `json:"audit"`
+	Providers   []Provider         `json:"providers"`
+	Timeout     TimeoutField       `json:"timeout_seconds"`
+	PromptProof *PromptProofConfig `json:"promptproof,omitempty"`
 }
 
 // TimeoutField lets the config omit timeout_seconds (defaulting sensibly)
@@ -130,6 +165,24 @@ func (c *Config) Validate() error {
 		}
 		if p.Pricing.PromptPer1M < 0 || p.Pricing.CompletionPer1M < 0 {
 			return fmt.Errorf("config: providers[%d] (%s): pricing must not be negative", i, p.Name)
+		}
+	}
+	if pp := c.PromptProof; pp != nil {
+		switch pp.Threshold {
+		case "", "suspicious", "dangerous":
+		default:
+			return fmt.Errorf("config: promptproof.threshold must be \"suspicious\" or \"dangerous\", got %q", pp.Threshold)
+		}
+		switch pp.Action {
+		case "", "block", "flag":
+		default:
+			return fmt.Errorf("config: promptproof.action must be \"block\" or \"flag\", got %q", pp.Action)
+		}
+		if pp.SuspiciousAt < 0 || pp.DangerousAt < 0 {
+			return fmt.Errorf("config: promptproof score thresholds must be >= 0")
+		}
+		if pp.Pool < 0 {
+			return fmt.Errorf("config: promptproof.pool must be >= 0")
 		}
 	}
 	return nil

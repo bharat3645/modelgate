@@ -31,6 +31,11 @@ type Gateway struct {
 	providers []resolvedProvider
 	auditor   *Auditor
 	client    *http.Client
+
+	// scanner, when non-nil, scans inbound request message content for
+	// prompt-injection / exfiltration signals before forwarding. nil
+	// means no scanning (the default). Set via EnableScanning.
+	scanner *Scanner
 }
 
 // New builds a Gateway from a loaded Config. Call Config.Validate (LoadConfig
@@ -46,6 +51,32 @@ func New(cfg *Config, auditor *Auditor) *Gateway {
 		auditor:   auditor,
 		client:    &http.Client{Timeout: time.Duration(cfg.Timeout.Seconds()) * time.Second},
 	}
+}
+
+// EnableScanning wires the promptproof scanner in from cfg. It is a
+// separate step from New (rather than folded into it) so New keeps its
+// non-erroring signature: starting the coprocess pool can fail (a missing
+// binary), and that must surface as an error at startup, not be swallowed.
+// A nil or disabled cfg.PromptProof is a no-op. Call before serving.
+func (g *Gateway) EnableScanning(cfg *Config) error {
+	if cfg.PromptProof == nil || !cfg.PromptProof.Enabled {
+		return nil
+	}
+	sc, err := newScanner(cfg.PromptProof)
+	if err != nil {
+		return err
+	}
+	g.scanner = sc
+	return nil
+}
+
+// Close releases resources held by the gateway — currently the promptproof
+// scanner coprocess pool. Safe to call when scanning was never enabled.
+func (g *Gateway) Close() error {
+	if g.scanner != nil {
+		g.scanner.Close()
+	}
+	return nil
 }
 
 // chatRequest is the minimal shape of an OpenAI-compatible chat-completions
@@ -93,7 +124,58 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Scan the message content before it reaches a provider. On a blocking
+	// verdict the request is rejected here and never forwarded.
+	if g.scanner != nil && g.scanRequest(w, body) {
+		return
+	}
+
 	g.proxy(w, body)
+}
+
+// scanRequest scans the request's message content with promptproof. It
+// returns true when the request was blocked (a 403 response has been
+// written and the caller must stop). A scanner error fails open (audited,
+// not blocked) — a scanner that cannot answer must not take the gateway
+// down. A flagging-but-below-block verdict sets an X-PromptProof-Verdict
+// header, audits a scan entry, and lets the request proceed.
+func (g *Gateway) scanRequest(w http.ResponseWriter, body []byte) bool {
+	res, err := g.scanner.Scan(scanContentFromRequest(body))
+	if err != nil {
+		g.auditor.Log(Entry{Error: "promptproof scan error", PromptProofError: err.Error()})
+		return false
+	}
+	if !g.scanner.triggers(res.Verdict) {
+		return false
+	}
+	if g.scanner.action == "flag" {
+		w.Header().Set("X-PromptProof-Verdict", res.Verdict)
+		g.auditor.Log(Entry{
+			PromptProofVerdict:    res.Verdict,
+			PromptProofScore:      res.Score,
+			PromptProofCategories: res.Categories,
+		})
+		return false
+	}
+	g.auditor.Log(Entry{
+		StatusCode:            http.StatusForbidden,
+		Error:                 fmt.Sprintf("request blocked by promptproof: %s (score %d)", res.Verdict, res.Score),
+		PromptProofVerdict:    res.Verdict,
+		PromptProofScore:      res.Score,
+		PromptProofCategories: res.Categories,
+		PromptProofBlocked:    true,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": fmt.Sprintf("modelgate: request blocked by promptproof (%s)", res.Verdict),
+		"promptproof": map[string]any{
+			"verdict":    res.Verdict,
+			"score":      res.Score,
+			"categories": res.Categories,
+		},
+	})
+	return true
 }
 
 // proxy tries each provider in order, forwarding body unmodified except

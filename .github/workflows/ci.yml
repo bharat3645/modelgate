@@ -15,6 +15,17 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+      # promptproof is a real dependency of the request-content scanner:
+      # install the actual binary so the integration tests run against real
+      # detection logic, not a stub. PROMPTPROOF_REQUIRED=1 makes a missing
+      # binary a hard failure, so the integration is never silently skipped.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install promptproof
+        run: |
+          cargo install --git https://github.com/bharat3645/promptproof --locked
+          echo "PROMPTPROOF_BIN=$(command -v promptproof)" >> "$GITHUB_ENV"
+          echo "PROMPTPROOF_REQUIRED=1" >> "$GITHUB_ENV"
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -d .; exit 1)
       - name: go vet
@@ -32,6 +43,12 @@ jobs:
         with:
           go-version: 'stable'
           cache: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install promptproof
+        run: |
+          cargo install --git https://github.com/bharat3645/promptproof --locked
+          echo "PROMPTPROOF_BIN=$(command -v promptproof)" >> "$GITHUB_ENV"
       - name: build binary
         run: go build -o /tmp/modelgate ./cmd/modelgate
       - name: end-to-end smoke

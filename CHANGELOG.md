@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.2.0] - 2026-07-22
+
+### Added
+- **promptproof integration — scanning inbound request content for prompt
+  injection.** Optional top-level `promptproof` config wires the
+  [promptproof](https://github.com/bharat3645/promptproof) scanner into the
+  request path: a chat-completion request's message content is scanned for
+  injection / exfiltration signals **before** it is forwarded to any provider.
+  Off by default — an absent `promptproof` block (or `enabled:false`) is
+  byte-for-byte the old behavior. On a verdict at or above `threshold`
+  (`suspicious`/`dangerous`) the gateway either **blocks** the request (`403`,
+  never forwarded — the tainted content never reaches a model) or **flags** it
+  (forwarded, `X-PromptProof-Verdict` header set, verdict audited). Configurable
+  `action`, score cutoffs, and coprocess `pool` size.
+- Detection is **not** reimplemented: the gateway runs a small pool of
+  `promptproof serve` coprocesses (promptproof ≥ 0.2.0) and streams the message
+  content through promptproof's length-prefixed framing. String message content
+  and the text parts of array (vision-style) content are both scanned, and
+  JSON-escaped hidden characters are decoded first so covert channels stay
+  visible. Fail-open: a scanner error is audited and the request proceeds.
+- Audit entries gain metadata-only `promptproof_verdict` / `promptproof_score` /
+  `promptproof_categories` / `promptproof_blocked` / `promptproof_error` fields
+  (never the scanned content).
+- Real integration tests (`gateway/promptproof_test.go`) drive the actual
+  promptproof binary through the gateway with malicious and benign payloads
+  (block, flag, array content, hidden-char decode, threshold, concurrency,
+  disabled-is-inert), and `ci/smoke.sh` blocks a real injected request
+  end-to-end. CI installs the real promptproof (`cargo install --git`) and runs
+  the tests with `PROMPTPROOF_REQUIRED=1` so the integration is never silently
+  skipped.
+- Benchmarks (`gateway/bench_test.go`): the added latency is ~33µs per request
+  (~40µs → ~73µs through the gateway); ~26µs for the isolated scan round trip.
+
 ## [0.1.0] - 2026-07-20
 
 Initial release.

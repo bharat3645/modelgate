@@ -19,7 +19,7 @@ import (
 	"github.com/bharat3645/modelgate/gateway"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -68,6 +68,10 @@ func run(args []string) error {
 	defer auditor.Close()
 
 	gw := gateway.New(cfg, auditor)
+	if err := gw.EnableScanning(cfg); err != nil {
+		return fmt.Errorf("enabling promptproof scanning: %w", err)
+	}
+	defer gw.Close()
 	srv := &http.Server{Addr: cfg.Listen, Handler: gw}
 
 	errCh := make(chan error, 1)

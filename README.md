@@ -121,6 +121,46 @@ Together AI, and Fireworks AI (verified against their current docs) all
 publish for their OpenAI-compatible endpoints - the same conventions
 should hold for most other OpenAI-compatible providers.
 
+## Prompt-injection scanning of request content (promptproof)
+
+modelgate sits in front of the model, so it is a natural place to inspect the
+content about to enter it. A top-level `promptproof` config block wires the
+[promptproof](https://github.com/bharat3645/promptproof) data-plane scanner into
+the request path: each request's message content is scanned for prompt-injection
+and exfiltration signals **before** it is forwarded to any provider.
+
+```json
+{
+  "promptproof": {"enabled": true, "action": "block", "threshold": "dangerous"},
+  "providers": [ ... ]
+}
+```
+
+On a verdict at or above `threshold` (`suspicious`/`dangerous`) the gateway
+either **blocks** the request (`403`, never forwarded — the tainted content
+never reaches a model) or **flags** it (forwarded, `X-PromptProof-Verdict`
+response header set, verdict audited). It scans both plain-string content and
+the text parts of array (vision-style) content, and decodes JSON-escaped hidden
+characters (zero-width, bidi, Unicode-tag smuggling) before scanning.
+
+It is **off by default**: no `promptproof` block means byte-for-byte the old
+behavior. Detection is not reimplemented here — modelgate runs a small pool of
+`promptproof serve` coprocesses (promptproof ≥ 0.2.0) and streams content
+through them, so the scanner is the single source of truth. A scanner error
+**fails open** (audited, request proceeds) rather than taking the gateway down.
+The audit entry records metadata only (`promptproof_verdict`, `promptproof_score`,
+`promptproof_categories`, `promptproof_blocked`) — never the scanned content.
+
+Options: `threshold` (`suspicious`/`dangerous`, default `dangerous`), `action`
+(`block`/`flag`, default `block`), `suspicious_at`/`dangerous_at`, `pool`
+(default 2), `binary` (default resolved on `PATH`).
+
+**Overhead** (Apple M4, `go1.26.5`, promptproof 0.2.0): scanning adds roughly
+**~33µs per request** (~40µs → ~73µs through the gateway); the isolated scan
+round trip is ~26µs. Because the scanner is a warm coprocess, not a process
+spawned per request, the cost is a frame round-trip, not a fork. Reproduce with
+`PROMPTPROOF_BIN=$(command -v promptproof) go test -run '^$' -bench . ./gateway/...`.
+
 ## Privacy stance
 
 The audit log (`audit.jsonl`, created `0600`) never contains prompt or
@@ -174,7 +214,9 @@ GW_BIN=./modelgate bash ci/smoke.sh   # real binary + real stub upstreams + audi
 [`mcp-gateway-lite`](https://github.com/bharat3645/mcp-gateway-lite) - the
 sibling project this one's architecture is modeled on, but gating MCP
 tool calls to *your* server instead of routing LLM chat-completion calls
-to upstream providers. [`agent-rules-audit`](https://github.com/bharat3645/agent-rules-audit) |
+to upstream providers. [`promptproof`](https://github.com/bharat3645/promptproof) -
+the data-plane scanner this gateway embeds to inspect request content.
+[`agent-rules-audit`](https://github.com/bharat3645/agent-rules-audit) |
 [`mcp-sentinel`](https://github.com/bharat3645/mcp-sentinel) |
 [`toolcage`](https://github.com/bharat3645/toolcage) |
 [`agent-flightbox`](https://github.com/bharat3645/agent-flightbox)
