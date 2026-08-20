@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Launch demo (`demo/modelgate-demo.cast` + `demo/run_demo.sh`): a real
+  asciinema recording of the fallback/cost-accounting story (groq-like
+  primary returns 503, fireworks-like backup succeeds, client gets one
+  response, audit log shows both attempts with real token counts and
+  computed cost) followed by the promptproof-scanning story (a benign
+  request is forwarded, an injected request is blocked with `403` before
+  it ever reaches a provider, and the audit log is grepped live to prove
+  the scanned content never leaked into it). Driven against the real
+  compiled binary, real stub upstreams, and a real `promptproof` binary
+  built from source — nothing synthetic or hand-edited in the cast.
+
 ## [0.2.0] - 2026-07-22
 
 ### Added
