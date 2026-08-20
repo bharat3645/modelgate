@@ -49,6 +49,22 @@ flowchart LR
     gw -.-> audit
 ```
 
+## Demo
+
+`asciinema play demo/modelgate-demo.cast` (or `bash demo/run_demo.sh` to run
+it yourself) walks through both headline behaviors against the real binary:
+
+1. **Automatic fallback + real cost accounting.** A groq-like primary
+   returns `503` (overloaded); modelgate falls back to a fireworks-like
+   backup automatically, the client gets one clean response, and
+   `audit.jsonl` shows both attempts with the real token counts and the
+   computed dollar cost — never the prompt or response text.
+2. **Inline prompt-injection scanning.** With `promptproof` enabled, a
+   benign request is forwarded normally; a request whose content carries
+   an injection payload is blocked with `403` *before it ever reaches a
+   provider* — and a live `grep` against the audit log proves the scanned
+   content never leaked into it, even for the blocked request.
+
 ## Quickstart
 
 ```sh
