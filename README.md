@@ -67,6 +67,14 @@ it yourself) walks through both headline behaviors against the real binary:
 
 ## Quickstart
 
+Install the released binary directly - no clone needed:
+
+```sh
+go install github.com/bharat3645/modelgate/cmd/modelgate@latest
+```
+
+Or build from a clone:
+
 ```sh
 go build -o modelgate ./cmd/modelgate
 
