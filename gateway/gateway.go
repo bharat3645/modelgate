@@ -290,9 +290,19 @@ func parseUsage(respBody []byte) Usage {
 // overrideModel returns body with its top-level "model" field replaced,
 // preserving every other field exactly. Requires body to already be valid
 // JSON (ServeHTTP checks this before proxy is ever called).
+//
+// Decoding uses UseNumber so every other field's numbers round-trip through
+// json.Number (its original text) rather than float64: unmarshaling into
+// float64 silently loses precision on any integer field outside float64's
+// exactly-representable range (e.g. a client-supplied "seed" or a large
+// "user" id above 2^53), which would violate the "preserving every other
+// field exactly" contract for exactly the providers that set
+// model_override.
 func overrideModel(body []byte, model string) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
 	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := dec.Decode(&m); err != nil {
 		return nil, err
 	}
 	m["model"] = model

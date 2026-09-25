@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`model_override` silently corrupted large integer fields in the
+  request body.** `overrideModel` decoded the whole body into
+  `map[string]any` to replace the top-level `model` field, which
+  unmarshals every JSON number as `float64` — losing precision on any
+  integer outside float64's exactly-representable range (2^53), e.g. a
+  client-supplied `seed`. A provider with `model_override` set (and only
+  that provider — others receive the body untouched) could receive a
+  silently different `seed` (or any other large-integer field) than the
+  client sent, contradicting the function's own "preserving every other
+  field exactly" contract. Fixed by decoding with `json.Decoder.UseNumber`
+  so every other field's numbers round-trip through their original text.
+  Regression tests added at both the unit (`overrideModel`) and gateway
+  (real upstream, real HTTP round trip) level.
+
 ### Added
 - Launch demo (`demo/modelgate-demo.cast` + `demo/run_demo.sh`): a real
   asciinema recording of the fallback/cost-accounting story (groq-like

@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -277,6 +278,45 @@ func TestGatewayModelOverrideRewritesModelPerProvider(t *testing.T) {
 	}
 	if seenModel != "accounts/fireworks/models/gpt-oss-120b" {
 		t.Errorf("upstream saw model = %q, want the override", seenModel)
+	}
+}
+
+func TestOverrideModelPreservesLargeIntegerPrecision(t *testing.T) {
+	// Regression: overrideModel used to decode into map[string]any, which
+	// unmarshals every JSON number as float64 - silently losing precision
+	// on any integer field outside float64's exactly-representable range
+	// (2^53), such as a client-supplied "seed". That breaks the function's
+	// own "preserving every other field exactly" contract for exactly the
+	// providers that set model_override.
+	body := []byte(`{"model":"generic","seed":9007199254740993,"messages":[{"role":"user","content":"hi"}]}`)
+	out, err := overrideModel(body, "override-model")
+	if err != nil {
+		t.Fatalf("overrideModel: %v", err)
+	}
+	if !bytes.Contains(out, []byte(`"seed":9007199254740993`)) {
+		t.Errorf("seed lost precision: got %s, want it to contain \"seed\":9007199254740993", out)
+	}
+}
+
+func TestGatewayModelOverridePreservesLargeIntegerPrecision(t *testing.T) {
+	var rawBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer upstream.Close()
+
+	t.Setenv("KEY", "sk-1")
+	cfg := testConfig(Provider{Name: "p", BaseURL: upstream.URL, APIKeyEnv: "KEY", ModelOverride: "override-model"})
+	gw := New(cfg, NewAuditorWriter(&bytes.Buffer{}))
+
+	resp := doChatRequest(t, gw, `{"model":"generic-name","seed":9007199254740993,"messages":[{"role":"user","content":"hi"}]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !bytes.Contains(rawBody, []byte(`"seed":9007199254740993`)) {
+		t.Errorf("upstream saw a mangled seed: got %s", rawBody)
 	}
 }
 
