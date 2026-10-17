@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -77,6 +78,7 @@ type Scanner struct {
 	timeout   time.Duration
 	pool      chan *ppProc
 
+	closed    atomic.Bool
 	closeOnce sync.Once
 }
 
@@ -129,9 +131,23 @@ func newScanner(c *PromptProofConfig) (*Scanner, error) {
 // Scan scans content and returns the verdict. On a coprocess error it
 // returns the error; callers fail open (a scanner that cannot answer must
 // not take the whole gateway down).
+//
+// If Close runs while this call holds its coprocess checked out of the
+// pool, the pool channel is never closed (see Close), so returning the
+// coprocess here would otherwise leave it in a pool nobody drains again.
+// Checking s.closed after the scan and shutting the coprocess down
+// directly in that case avoids that leak without needing to close the
+// channel - and closing the channel is exactly what used to make this
+// send panic with "send on closed channel" whenever a scan outlived a
+// concurrent Close (e.g. a slow/wedged coprocess still mid-scan when the
+// server's shutdown deadline fires and runs the deferred Gateway.Close).
 func (s *Scanner) Scan(content string) (scanResult, error) {
 	p := <-s.pool
 	res, err := p.scan(content, s.timeout)
+	if s.closed.Load() {
+		p.shutdown()
+		return res, err
+	}
 	s.pool <- p
 	return res, err
 }
@@ -142,12 +158,23 @@ func (s *Scanner) triggers(verdict string) bool {
 	return verdictRank(verdict) >= s.threshold
 }
 
-// Close shuts every coprocess down. Safe to call more than once.
+// Close shuts every coprocess down. Safe to call more than once, and safe
+// to call while a Scan is in flight: it never closes the pool channel
+// (doing so would race a concurrent Scan's attempt to return its
+// coprocess, which sends on this same channel - see Scan), so it only
+// drains and shuts down coprocesses that are idle in the pool right now.
+// A coprocess currently checked out by an in-flight Scan is shut down by
+// that Scan itself once s.closed is visible to it.
 func (s *Scanner) Close() {
 	s.closeOnce.Do(func() {
-		close(s.pool)
-		for p := range s.pool {
-			p.shutdown()
+		s.closed.Store(true)
+		for {
+			select {
+			case p := <-s.pool:
+				p.shutdown()
+			default:
+				return
+			}
 		}
 	})
 }
