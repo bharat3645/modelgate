@@ -20,10 +20,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func findPromptproofBin() string {
@@ -308,6 +310,49 @@ func TestPromptProof_ScannerConcurrent(t *testing.T) {
 	for err := range errs {
 		t.Error(err)
 	}
+}
+
+// TestScanner_CloseDuringInFlightScanDoesNotPanic reproduces a shutdown-path
+// race: Gateway.Close (called from cmd/modelgate's deferred shutdown, right
+// after srv.Shutdown's deadline) can run while a Scan started by an
+// in-flight request is still waiting on a slow or wedged promptproof
+// coprocess. No real promptproof binary is needed - this is a concurrency
+// test, not a detection test, so a minimal shell-script stub that speaks
+// just enough of promptproof's length-prefixed `serve` framing (read a
+// length line, discard that many bytes, sleep, answer a verdict line) is
+// enough to hold a coprocess checked out of a size-1 pool for a controlled
+// window while Close runs concurrently.
+func TestScanner_CloseDuringInFlightScanDoesNotPanic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stub is a POSIX shell script")
+	}
+	script := "#!/bin/sh\nwhile IFS= read -r len; do\n  head -c \"$len\" >/dev/null\n  sleep 0.2\n  printf '{\"verdict\":\"ok\",\"score\":0,\"findings\":[]}\\n'\ndone\n"
+	path := filepath.Join(t.TempDir(), "slow-promptproof.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sc, err := newScanner(&PromptProofConfig{Enabled: true, Binary: path, Pool: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Result/error don't matter here - only that returning the
+		// coprocess to (or shutting it down instead of) the pool
+		// below never panics.
+		_, _ = sc.Scan("hello")
+	}()
+
+	// Give the goroutine above time to check its coprocess out of the
+	// size-1 pool (fast: a channel receive) before the script's 200ms
+	// sleep elapses, so Close below races the in-flight Scan rather than
+	// running before or after it.
+	time.Sleep(30 * time.Millisecond)
+	sc.Close()
+	<-done
 }
 
 func readBody(resp *http.Response) (string, error) {
